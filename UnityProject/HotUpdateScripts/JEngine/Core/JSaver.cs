@@ -67,79 +67,11 @@ namespace JEngine.Core
                 return null;
             }
             string strData = val.ToString();
-            var result = CryptoHelper.EncryptStr(strData, encryptKey);
+            var result = CryptoMgr.EncryptStr(strData, encryptKey);
 
             PlayerPrefs.SetString(dataName, result);
             AddJSaverKeys(dataName);
             return result;
-        }
-
-        /// <summary>
-        /// Save a data to local storage as protobuf bytes
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="val"></param>
-        /// <param name="encryptKey"></param>
-        /// <returns>Saved value</returns>
-        public static byte[] SaveAsProtobufBytes<T>(string dataName, T val, string encryptKey = null) where T : class
-        {
-            if(String.IsNullOrEmpty(encryptKey))
-            {
-                encryptKey = defaultEncryptKey;
-            }
-            if (encryptKey.Length != 16)
-            {
-                var ex = new Exception("encryptKey needs to be 16 characters!");
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
-            try
-            {
-                byte[] byteData = StringifyHelper.ProtoSerialize(val);
-                var result = CryptoHelper.AesEncrypt(byteData, encryptKey);
-                PlayerPrefs.SetString(dataName, Convert.ToBase64String(result));
-                AddJSaverKeys(dataName);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Save a data to local storage as JSON
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="val"></param>
-        /// <param name="encryptKey"></param>
-        /// <returns>Saved value</returns>
-        public static string SaveAsJSON<T>(string dataName, T val, string encryptKey = null)
-        {
-            if(String.IsNullOrEmpty(encryptKey))
-            {
-                encryptKey = defaultEncryptKey;
-            }
-            if (encryptKey.Length != 16)
-            {
-                var ex = new Exception("encryptKey needs to be 16 characters!");
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
-            try
-            {
-                string strData = StringifyHelper.JSONSerliaze(val);
-                var result = CryptoHelper.EncryptStr(strData, encryptKey);
-                PlayerPrefs.SetString(dataName, result);
-                AddJSaverKeys(dataName);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
         }
 
         /// <summary>
@@ -171,11 +103,12 @@ namespace JEngine.Core
             var result = PlayerPrefs.GetString(dataName);
             try
             {
-                result = CryptoHelper.DecryptStr(result, encryptKey);
+                result = CryptoMgr.DecryptStr(result, encryptKey);
                 return result;
             }
             catch (Exception ex)
             {
+                if (ex.InnerException != null) ex = ex.InnerException;
                 Log.PrintError($"can not decrypt <{dataName}>, error message: {ex.Message}, returns local data: {result}" +
                     $"无法解密<{dataName}>，错误：{ex.Message}，已返回本地数据：{result}");
                 return result;
@@ -285,80 +218,6 @@ namespace JEngine.Core
                 return result;
             }
             return defaultValue;
-        }
-
-        /// <summary>
-        /// Get object from local storage from JSON
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="val"></param>
-        /// <param name="encryptKey"></param>
-        /// <returns>Saved value</returns>
-        public static T GetObjectFromJSON<T>(string dataName, string encryptKey = null) where T: class
-        {
-            if (!HasData(dataName))
-            {
-                var ex = new Exception($"<{dataName}> does not exist\n" +
-                    $"<{dataName}>不存在");
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
-            if (String.IsNullOrEmpty(encryptKey))
-            {
-                encryptKey = defaultEncryptKey;
-            }
-            if (encryptKey.Length != 16)
-            {
-                throw new Exception("encryptKey needs to be 16 characters!");
-            }
-            var result = PlayerPrefs.GetString(dataName);
-            try
-            {
-                result = CryptoHelper.DecryptStr(result, encryptKey);
-                return StringifyHelper.JSONDeSerliaze<T>(result);
-            }
-            catch (Exception ex)
-            {
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return default(T);
-            }
-        }
-
-        /// <summary>
-        /// Get object from local storage from protobuf
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="val"></param>
-        /// <param name="encryptKey"></param>
-        /// <returns>Saved value</returns>
-        public static T GetObjectFromProtobuf<T>(string dataName, string encryptKey = null) where T : class
-        {
-            if (!HasData(dataName))
-            {
-                var ex = new Exception($"<{dataName}> does not exist\n" +
-                    $"<{dataName}>不存在");
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return null;
-            }
-            if (String.IsNullOrEmpty(encryptKey))
-            {
-                encryptKey = defaultEncryptKey;
-            }
-            if (encryptKey.Length != 16)
-            {
-                throw new Exception("encryptKey needs to be 16 characters!");
-            }
-            var result = PlayerPrefs.GetString(dataName);
-            try
-            {
-                byte[] bytes = CryptoHelper.AesDecrypt(Convert.FromBase64String(result), encryptKey);
-                return StringifyHelper.ProtoDeSerialize<T>(bytes);
-            }
-            catch (Exception ex)
-            {
-                Log.PrintError($"[JSaver] 错误：{ex.Message}, {ex.Data["StackTrace"]}");
-                return default(T);
-            }
         }
 
         /// <summary>

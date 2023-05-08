@@ -26,45 +26,8 @@
 using JEngine.Core;
 namespace JEngine.Examples
 {
-    [System.Serializable][global::ProtoBuf.ProtoContract()]
-    public class DataClass
+    public partial class DataClass
     {
-        /*
-         * Fields to serialize
-         */
-        [global::ProtoBuf.ProtoMember(1)] public int id = 0;
-        [global::ProtoBuf.ProtoMember(2)] public string name = "";
-        [global::ProtoBuf.ProtoMember(3)] private long money = 0;
-        [global::ProtoBuf.ProtoMember(4)] public bool gm = false;
-
-        /// <summary>
-        /// Property which holds the real value
-        /// </summary>
-        public long Money
-        {
-            get
-            {
-                return money;
-            }
-            set
-            {
-                money = value;
-                if (BindableMoney != null)
-                {
-                    BindableMoney.Value = value;
-                }
-                else
-                {
-                    BindableMoney = new BindableProperty<long>(value);
-                }
-            }
-        }
-
-        /*
-        * Fields to bind
-        */
-        public BindableProperty<long> BindableMoney = new BindableProperty<long>(0);
-
 
         public void Awake()
         {

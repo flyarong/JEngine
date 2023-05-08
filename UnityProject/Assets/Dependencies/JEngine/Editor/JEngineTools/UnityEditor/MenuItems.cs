@@ -23,11 +23,16 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
+
 #if UNITY_EDITOR
-using System.Diagnostics;
+using System.IO;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using ILRuntime.CLR.TypeSystem;
+using ILRuntime.Mono.Cecil.Pdb;
+using ILRuntime.Runtime.Enviorment;
 using JEngine.Core;
-using libx;
 using UnityEditor;
 using UnityEngine;
 
@@ -36,53 +41,72 @@ namespace JEngine.Editor
     [Obfuscation(Exclude = true)]
     internal class MenuItems
     {
-        [MenuItem("JEngine/Open Documents",priority = 1999)]
+        [MenuItem("JEngine/Optimize Dll &o")]
+        public static void OptimizeDll()
+        {
+            var dllPath = ConstMgr.DLLSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.DLLExtension;
+            var pdbPath = ConstMgr.PdbSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.PdbExtension;
+            var dllOutPath = ConstMgr.DLLSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.ExprFlag + ConstMgr.BytesExtension;
+            var pdbOutPath = ConstMgr.PdbSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.ExprFlag  + ConstMgr.BytesExtension;
+            //execute Optimizer.Optimize(dllPath, pdbPath); in a new thread with timeout (using cancellation token), if timeout then cancel the task
+            var cts = new CancellationTokenSource();
+            var task = Task.Run(() =>
+            {
+                try
+                {
+                    Optimizer.Optimize(dllPath, pdbPath, dllOutPath, pdbOutPath);
+                }
+                catch
+                {
+                    Optimizer.Optimize(dllPath, null, dllOutPath, null);
+                }
+            }, cts.Token);
+            if (task.Wait(10000))
+            {
+                Debug.Log("Optimize Dll Success");
+            }
+            else
+            {
+                cts.Cancel();
+                Debug.LogError("Optimize Dll Timeout");
+            }
+        }
+
+        [MenuItem("JEngine/Test Optimized Dll &r")]
+        public static void TestOptimizedDll()
+        {
+            var dllOutPath = ConstMgr.DLLSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.ExprFlag + ConstMgr.BytesExtension;
+            var pdbOutPath = ConstMgr.PdbSourceFolder + ConstMgr.MainHotDLLName + ConstMgr.ExprFlag  + ConstMgr.BytesExtension;
+            AppDomain appdomain = new AppDomain();
+            try
+            {
+                appdomain.LoadAssembly(new MemoryStream(File.ReadAllBytes(dllOutPath)),
+                    File.Exists(pdbOutPath) ? new MemoryStream(File.ReadAllBytes(pdbOutPath)) : null,
+                    new PdbReaderProvider());
+            }
+            catch
+            {
+                appdomain.LoadAssembly(new MemoryStream(File.ReadAllBytes(dllOutPath)),
+                    null,
+                    new PdbReaderProvider());
+            }
+            var type = (ILType)appdomain.GetType("HotUpdateScripts.Test");
+            var instance = appdomain.Instantiate("HotUpdateScripts.Test");
+            var method = type.GetMethod("DoTest", 0);
+            appdomain.Invoke(method, instance, null);
+        }
+
+        [MenuItem("JEngine/Open Documentation", priority = 1999)]
         public static void OpenDocument()
         {
-            Application.OpenURL("https://xgamedev.uoyou.com");
+            Application.OpenURL("https://docs.xgamedev.net/");
         }
-        
-        [MenuItem("JEngine/Open on Github",priority = 2000)]
+
+        [MenuItem("JEngine/Open on Github", priority = 2000)]
         public static void OpenGithub()
         {
             Application.OpenURL("https://github.com/JasonXuDeveloper/JEngine");
         }
-      
-        // Xasset Pro,打包需采用AES加密
-#if XASSET_PRO
-        [MenuItem("JEngine/DLL加密 （XASSET PRO请先执行这个再去打Bundles）")]
-        private static void BuildAssetBundles()
-        {
-            DLLMgr.Delete("Assets/HotUpdateResources/Dll/HotUpdateScripts.bytes");
-            CryptoWindow.ShowWindow();
-            CryptoWindow.Build = s =>
-            {
-                var watch = new Stopwatch();
-                watch.Start();
-                var bytes = DLLMgr.FileToByte(DLLMgr.DllPath);
-                var result = DLLMgr.ByteToFile(CryptoHelper.AesEncrypt(bytes, s),
-                    "Assets/HotUpdateResources/Dll/HotUpdateScripts.bytes");
-                watch.Stop();
-                Log.Print("Convert Dlls in: " + watch.ElapsedMilliseconds + " ms.");
-                if (!result)
-                {
-                    Log.PrintError("DLL转Byte[]出错！");
-                }
-
-                watch = new Stopwatch();
-                watch.Start();
-                BuildScript.ApplyBuildRules();
-                watch.Stop();
-                Log.Print("ApplyBuildRules in: " + watch.ElapsedMilliseconds + " ms.");
-
-                watch = new Stopwatch();
-                watch.Start();
-                BuildScript.BuildAssetBundles();
-                watch.Stop();
-                Log.Print("BuildAssetBundles in: " + watch.ElapsedMilliseconds + " ms.");
-            };
-        }
-#endif
     }
 }
 #endif

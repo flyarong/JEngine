@@ -23,11 +23,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-using libx;
 using System;
+using YooAsset;
 using System.Text;
 using UnityEngine;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace JEngine.Core
 {
@@ -38,21 +39,9 @@ namespace JEngine.Core
         /// 从热更资源里读取prefab
         /// </summary>
         /// <param name="path"></param>
-        public JPrefab(string path)
+        public JPrefab(string path, bool async = false) : this(path, null, async, null)
         {
-            if (!path.Contains(".prefab"))
-            {
-                path = new StringBuilder(path).Append(".prefab").ToString();
-            }
-            _request = Assets.LoadAssetAsync(path, typeof(GameObject));
-            Loaded = false;
-            _request.completed += (AssetRequest request) =>
-            {
-                Loaded = true;
-                Instance = (GameObject)request.asset;
-                ErrorMessage = _request.error;
-            };
-            this.path = path;
+
         }
 
         /// <summary>
@@ -60,28 +49,72 @@ namespace JEngine.Core
         /// 从热更资源里读取prefab
         /// </summary>
         /// <param name="path"></param>
+        public JPrefab(string path, string package, bool async = false) : this(path, package, async, null)
+        {
+
+        }
+
+        /// <summary>
+        /// Load a prefab from hot update resources (async)
+        /// 从热更资源里读取prefab （异步）
+        /// </summary>
+        /// <param name="path"></param>
         /// <param name="complete">Action<bool,JPrefab>, success 与 JPrefab</param>
-        public JPrefab(string path,Action<bool,JPrefab> complete)
+        public JPrefab(string path, Action<bool, JPrefab> complete = null) : this(path, null, true, complete)
+        {
+
+        }
+
+        public JPrefab(string path,string package, Action<bool, JPrefab> complete = null) : this(path,package, true, complete)
+        {
+
+        }
+
+
+        private JPrefab(string path, string package, bool async, Action<bool, JPrefab> complete)
         {
             if (!path.Contains(".prefab"))
             {
                 path = new StringBuilder(path).Append(".prefab").ToString();
             }
-            _request = Assets.LoadAssetAsync(path, typeof(GameObject));
-            Loaded = false;
-            _request.completed += (AssetRequest request) =>
+            if (async)
             {
+                _ = LoadPrefabAsync(path, package, complete);
+            }
+            else
+            {
+                var obj = AssetMgr.Load<GameObject>(path, package, out handle);
+                Instance = obj;
                 Loaded = true;
-                Instance = (GameObject)request.asset;
-                ErrorMessage = _request.error;
-                complete?.Invoke(String.IsNullOrEmpty(ErrorMessage), this);
-            };
+            }
             this.path = path;
         }
 
-        private string path;
+        /// <summary>
+        /// Wait for async
+        /// 如果是异步加载JPrefab，则可以使用此方法等待
+        /// </summary>
+        public async Task WaitForAsyncLoading()
+        {
+            await LoadTask.Task;
+        }
 
-        private AssetRequest _request;
+
+        private TaskCompletionSource<bool> LoadTask;
+
+
+        private async Task LoadPrefabAsync(string path, string package, Action<bool, JPrefab> callback)
+        {
+            LoadTask = new TaskCompletionSource<bool>();
+            var (obj, handle) = await AssetMgr.LoadAsyncWithHandle<GameObject>(path, package);
+            Instance = obj;
+            Loaded = true;
+            callback?.Invoke(!Error, this);
+            LoadTask.SetResult(true);
+        }
+
+        private string path;
+        private AssetOperationHandle handle;
 
         /// <summary>
         /// If the prefab has loaded or not (if it has error, it will still be loaded)
@@ -93,25 +126,7 @@ namespace JEngine.Core
         /// If has error while loading or not
         /// 加载时是否有错
         /// </summary>
-        public bool Error => !String.IsNullOrEmpty(ErrorMessage);
-
-        /// <summary>
-        /// Error message when error
-        /// 错误时的错误信息
-        /// </summary>
-        public string ErrorMessage;
-
-        /// <summary>
-        /// Progress of loading a prefab
-        /// 加载prefab的进度
-        /// </summary>
-        public float Progress => _request.progress;
-
-        /// <summary>
-        /// State of loading a prefab
-        /// 加载prefab的状态
-        /// </summary>
-        public LoadState State => _request.loadState;
+        public bool Error => Instance == null;
 
         /// <summary>
         /// Prefab GameObject (this is not in scene and it has not been instantiated)
@@ -123,7 +138,22 @@ namespace JEngine.Core
         /// All GameObjects that has been instantiated to scene
         /// 全部被生成到场景中的游戏对象
         /// </summary>
-        public List<GameObject> InstantiatedGameObjects = new List<GameObject>(0);
+        public List<GameObject> InstantiatedGameObjects
+        {
+            get
+            {
+                List<GameObject> ret = new List<GameObject>();
+                for(int i = 0, cnt = _instantiatedGameObjects.Count; i < cnt; i++)
+                {
+                    var gameObject = _instantiatedGameObjects[i];
+                    if (gameObject == null || ReferenceEquals(gameObject, null)) continue;
+                    ret.Add(gameObject);
+                }
+                _instantiatedGameObjects = ret;
+                return ret;
+            }
+        }
+        private List<GameObject> _instantiatedGameObjects = new List<GameObject>(0);
 
         /// <summary>
         /// Instantiate a prefab
@@ -139,7 +169,7 @@ namespace JEngine.Core
             }
             if (Error)
             {
-                throw new Exception($"{path} has an error: {ErrorMessage}");
+                throw new Exception($"{path} has an error");
             }
             var go = UnityEngine.Object.Instantiate(Instance);
             if (!String.IsNullOrEmpty(name))
@@ -165,7 +195,7 @@ namespace JEngine.Core
             }
             if (Error)
             {
-                throw new Exception($"{path} has an error: {ErrorMessage}");
+                throw new Exception($"{path} has an error");
             }
             var go = UnityEngine.Object.Instantiate(Instance, parent);
             if (!String.IsNullOrEmpty(name))
@@ -192,7 +222,7 @@ namespace JEngine.Core
             }
             if (Error)
             {
-                throw new Exception($"{path} has an error: {ErrorMessage}");
+                throw new Exception($"{path} has an error");
             }
             var go = UnityEngine.Object.Instantiate(Instance, parent, instantiateInWorldSpace);
             if (!String.IsNullOrEmpty(name))
@@ -219,7 +249,7 @@ namespace JEngine.Core
             }
             if (Error)
             {
-                throw new Exception($"{path} has an error: {ErrorMessage}");
+                throw new Exception($"{path} has an error");
             }
             var go = UnityEngine.Object.Instantiate(Instance, position, rotation);
             if (!String.IsNullOrEmpty(name))
@@ -247,7 +277,7 @@ namespace JEngine.Core
             }
             if (Error)
             {
-                throw new Exception($"{path} has an error: {ErrorMessage}");
+                throw new Exception($"{path} has an error");
             }
             var go = UnityEngine.Object.Instantiate(Instance, position, rotation, parent);
             if (!String.IsNullOrEmpty(name))
@@ -256,6 +286,18 @@ namespace JEngine.Core
             }
             InstantiatedGameObjects.Add(go);
             return go;
+        }
+
+        /// <summary>
+        /// Destory all instantiated gameObjects from this prefab
+        /// 删除该prefab生成的全部gameObject
+        /// </summary>
+        public void DestroyAllInstantiatedObjects()
+        {
+            for (int i = 0, cnt = InstantiatedGameObjects.Count; i < cnt; i++)
+            {
+                UnityEngine.Object.DestroyImmediate(InstantiatedGameObjects[i]);
+            }
         }
 
         public override string ToString()
@@ -279,8 +321,9 @@ namespace JEngine.Core
             {
                 return;
             }
-            _request.Release();
-            _request = null;
+            DestroyAllInstantiatedObjects();
+            _instantiatedGameObjects.Clear();
+            handle.Release();
             Instance = null;
             GC.Collect();
             GC.SuppressFinalize(this);

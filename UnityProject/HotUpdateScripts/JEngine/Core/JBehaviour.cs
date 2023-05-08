@@ -26,13 +26,11 @@
 using System;
 using UnityEngine;
 using System.Linq;
-using System.Threading;
-using System.Reflection;
-using System.Collections;
 using System.Diagnostics;
+using System.Collections;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using JEngine.UI;
+// ReSharper disable UnusedMember.Local
 
 namespace JEngine.Core
 {
@@ -45,104 +43,132 @@ namespace JEngine.Core
         /// Constuctor
         /// 构造函数
         /// </summary>
-        public JBehaviour()
+        protected JBehaviour()
         {
             //添加实例ID
-            _instanceID = JBehaviourMgr.Instance.GetJBehaviourInstanceID();
+            _instanceID = GetJBehaviourInstanceID();
             JBehaviours.Add(_instanceID, this);
-
-            LoopAwaitToken = new CancellationTokenSource();
+            JBehavioursList.Add(this);
         }
 
         /// <summary>
-        /// Manager for JBehaviours
+        /// Get Instance ID for JBehaviour
         /// </summary>
-        private class JBehaviourMgr : MonoBehaviour
+        /// <returns></returns>
+        private static string GetJBehaviourInstanceID()
         {
-            /// <summary>
-            /// JBehaviour管理实例
-            /// </summary>
-            public static JBehaviourMgr Instance
+            var instanceID = Guid.NewGuid().ToString("N");
+            while (JBehaviours.ContainsKey(instanceID))
             {
-                get
+                instanceID = Guid.NewGuid().ToString("N");
+            }
+
+            return instanceID;
+        }
+
+        /// <summary>
+        /// 静态构造函数
+        /// </summary>
+        static JBehaviour()
+        {
+            //注册循环
+            ThreadMgr.QueueOnMainThread(() =>
+            {
+                CoroutineMgr.Instance.StartCoroutine(JBehavioursLoop());
+            });
+        }
+
+        /// <summary>
+        /// Do the loop
+        /// </summary>
+        private static IEnumerator JBehavioursLoop()
+        {
+            Stopwatch sw = new Stopwatch();
+            for (;;)
+            {
+                if (!Application.isPlaying) break;
+                yield return ConstMgr.WaitFor1Sec;
+                int cnt = LoopJBehaviours.Count;
+                for (int i = 0; i < cnt; i++)
                 {
-                    if (_instance == null)
+                    var jb = LoopJBehaviours[i];
+                    if (jb._gameObject != null)
                     {
-                        _instance = new GameObject("JBehaviourMgr").AddComponent<JBehaviourMgr>();
-                    }
-                    return _instance;
-                }
-            }
-            private static JBehaviourMgr _instance;
-
-            /// <summary>
-            /// Get Instance ID for JBehaviour
-            /// </summary>
-            /// <returns></returns>
-            public string GetJBehaviourInstanceID()
-            {
-                var _instanceID = System.Guid.NewGuid().ToString("N");
-                while (JBehaviours.ContainsKey(_instanceID))
-                {
-                    _instanceID = System.Guid.NewGuid().ToString("N");
-                }
-                return _instanceID;
-            }
-
-            /// <summary>
-            /// Create new thread to cancel task.delay
-            /// </summary>
-            private void Awake()
-            {
-                DontDestroyOnLoad(this);
-                StartCoroutine(RepeatCheckJBehaviour());
-            }
-
-            /// <summary>
-            /// Coroutine to check JBehaviour
-            /// </summary>
-            /// <returns></returns>
-            IEnumerator RepeatCheckJBehaviour()
-            {
-                while (true)
-                {
-                    CheckJBehaviour();
-                    yield return null;
-                }
-            }
-
-            /// <summary>
-            /// Check and cancel task.delay
-            /// </summary>
-            private void CheckJBehaviour()
-            {
-                for (int i = 0; i < JBehaviours.Count; i++)
-                {
-                    var jb = JBehaviours.ElementAt(i);
-                    try
-                    {
-                        if (jb.Value._gameObject == null)
+                        if (jb._gameObject.activeInHierarchy == jb._hidden)
                         {
-                            jb.Value.LoopAwaitToken.Cancel();
-                            JBehaviours[jb.Value._instanceID] = null;
-                            JBehaviours.Remove(jb.Value._instanceID);
-                            i--;
+                            if (jb._hidden)
+                            {
+                                jb.OnShow();
+                            }
+                            else
+                            {
+                                jb.OnHide();
+                            }
+
+                            jb._hidden = !jb._hidden;
                         }
+
+                        if (jb._paused || jb._hidden)
+                        {
+                            continue;
+                        }
+
+
+                        //调整参数
+                        if (jb.TimeScale < 0.001f)
+                        {
+                            jb.TimeScale = 1;
+                        }
+
+                        if (jb.Frequency <= 0)
+                        {
+                            jb.Frequency = 1;
+                        }
+
+                        float duration;
+                        if (jb.FrameMode) //等待
+                        {
+                            duration = jb.Frequency / ((float)Application.targetFrameRate <= 0
+                                ? FpsMonitor.FPS
+                                : Application.targetFrameRate);
+                        }
+                        else
+                        {
+                            duration = jb.Frequency / 1000f;
+                        }
+
+                        duration /= jb.TimeScale;
+
+                        if (duration <= 0)
+                        {
+                            duration = 0.001f;
+                        }
+                        
+                        if (Time.realtimeSinceStartup - jb._curTime < duration)
+                        {
+                            continue;
+                        }
+
+                        jb._curTime = Time.realtimeSinceStartup;
+
+                        sw.Restart();
+                        jb.DoLoop();
+                        sw.Stop();
+
+                        //操作时间
+                        var time = sw.ElapsedMilliseconds / 1000f + duration;
+                        jb.LoopCounts++;
+                        jb.LoopDeltaTime = time;
+                        jb.TotalTime += time;
                     }
-                    catch (MissingReferenceException)
+                    else
                     {
-                        jb.Value.LoopAwaitToken.Cancel();
-                        JBehaviours[jb.Value._instanceID] = null;
-                        JBehaviours.Remove(jb.Value._instanceID);
+                        LoopJBehaviours.RemoveAt(i);
                         i--;
+                        cnt = LoopJBehaviours.Count;
+                        jb.Destroy();
                     }
                 }
-            }
-
-            private void OnDestroy()
-            {
-                CheckJBehaviour();
-                JBehaviours = null;
             }
         }
 
@@ -162,15 +188,17 @@ namespace JEngine.Core
             if (Application.isEditor)
             {
                 var id = AddClassBind(gameObject, activeAfter, typeof(T));
-                return (T)JBehaviours[id];
+                var ret = (T)JBehaviours[id];
+                ret.Check();
+                return ret;
             }
-            else//不然直接返回实例
-            {
-                T val = System.Activator.CreateInstance<T>();
-                val._gameObject = gameObject;
-                if (activeAfter) val.Activate();
-                return val;
-            }
+
+            //不然直接返回实例
+            T val = Activator.CreateInstance<T>();
+            val._gameObject = gameObject;
+            val.Check();
+            if (activeAfter) val.Activate();
+            return val;
         }
 
         /// <summary>
@@ -186,16 +214,16 @@ namespace JEngine.Core
 
             var jBehaviour = type;
             var cb = gameObject.AddComponent<ClassBind>();
-            var _cb = new ClassData()
+            var cd = new ClassData()
             {
-                classNamespace = jBehaviour.Namespace,
-                className = jBehaviour.Name,
+                classNamespace = "",
+                className = jBehaviour.FullName,
                 activeAfter = activeAfter,
-                useConstructor = true
             };
-            var id = cb.AddClass(_cb);
-            cb.Active(_cb);
+            var id = ((JBehaviour)cb.AddClass(cd))._instanceID;
+            cb.Active(cd);
             UnityEngine.Object.Destroy(cb);
+            LifeCycleMgr.Instance.ExecuteOnceTask();
             return id;
         }
 
@@ -208,7 +236,20 @@ namespace JEngine.Core
         /// <returns></returns>
         public static T GetJBehaviour<T>(GameObject gameObject) where T : JBehaviour
         {
-            return (T)JBehaviours.Values.ToList().Find(jb => jb._gameObject == gameObject);
+            if (!GameObjectJBehaviours.ContainsKey(gameObject))
+            {
+                return null;
+            }
+
+            foreach (var jb in GameObjectJBehaviours[gameObject])
+            {
+                if (jb.CanAssignTo(typeof(T)))
+                {
+                    return (T)jb;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -216,11 +257,11 @@ namespace JEngine.Core
         /// 通过实例ID获取JBehaviour
         /// </summary>
         /// <typeparam name="T"></typeparam>
-        /// <param name="gameObject"></param>
+        /// <param name="instanceID"></param>
         /// <returns></returns>
         public static T GetJBehaviour<T>(string instanceID) where T : JBehaviour
         {
-            return (T)JBehaviours.Values.ToList().Find(jb => jb._instanceID == instanceID);
+            return (T)JBehavioursList.Find(jb => jb._instanceID == instanceID);
         }
 
         /// <summary>
@@ -232,35 +273,49 @@ namespace JEngine.Core
         /// <returns></returns>
         public static T[] GetJBehaviours<T>(GameObject gameObject) where T : JBehaviour
         {
-            return (T[])JBehaviours.Values.ToList().FindAll(jb => jb._gameObject == gameObject).ToArray();
+            if (!GameObjectJBehaviours.ContainsKey(gameObject))
+            {
+                return Array.Empty<T>();
+            }
+
+            return (T[])GameObjectJBehaviours[gameObject].ToList().FindAll(jb => jb.CanAssignTo(typeof(T))).ToArray();
+        }
+
+        /// <summary>
+        /// Find a JBehaviour that is the given type
+        /// 通过指定类型寻找一个JBehaviour
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static T FindJBehaviourOfType<T>() where T : JBehaviour
+        {
+            return (T)JBehavioursList.First(j => j is T);
+        }
+
+        /// <summary>
+        /// Find all JBehaviours that are the given type
+        /// 通过指定类型寻找全部JBehaviour
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static T[] FindJBehavioursOfType<T>() where T : JBehaviour
+        {
+            return (T[])JBehavioursList.FindAll(j => j is T).ToArray();
         }
 
         /// <summary>
         /// Remove a JBehaviour
+        /// 删除一个JBehaviour
         /// </summary>
         /// <param name="jBehaviour"></param>
         public static void RemoveJBehaviour(JBehaviour jBehaviour)
         {
             if (Application.isEditor)
             {
-                UnityEngine.Object.Destroy(GetJBehaviourInEditor(jBehaviour));
+                jBehaviour.gameObject.DestroyHotComponent(jBehaviour);
             }
-            jBehaviour.Destroy();
-        }
 
-        /// <summary>
-        /// Get a JBehaviour in Editor
-        /// </summary>
-        /// <param name="jBehaviour"></param>
-        /// <returns></returns>
-        private static MonoBehaviourAdapter.Adaptor GetJBehaviourInEditor(JBehaviour jBehaviour)
-        {
-            var f = typeof(JBehaviour).GetField("_instanceID", BindingFlags.NonPublic);
-            return jBehaviour._gameObject.GetComponents<MonoBehaviourAdapter.Adaptor>()
-                .ToList()
-                .Find(a =>
-                a.isJBehaviour &&
-                f?.GetValue(a.ILInstance).ToString() == jBehaviour._instanceID);
+            jBehaviour.Destroy();
         }
 
         #endregion
@@ -272,79 +327,115 @@ namespace JEngine.Core
         /// All JBehaviuours
         /// 全部JBehaviour
         /// </summary>
-        private static Dictionary<string, JBehaviour> JBehaviours = new Dictionary<string, JBehaviour>(0);
+        private static readonly Dictionary<string, JBehaviour> JBehaviours = new Dictionary<string, JBehaviour>(17);
 
+        /// <summary>
+        /// All JBehaviours list
+        /// 全部JBehaviour的列表
+        /// </summary>
+        private static readonly List<JBehaviour> JBehavioursList = new List<JBehaviour>(17);
+
+        /// <summary>
+        /// All JBehaviours to loop
+        /// 全部待循环的JBehaviour
+        /// </summary>
+        private static readonly List<JBehaviour> LoopJBehaviours = new List<JBehaviour>(17);
+
+        /// <summary>
+        /// All JBehaviour in specefic GameObject
+        /// 全部在某个GameObject上的JBehaviour
+        /// </summary>
+        private static readonly Dictionary<GameObject, HashSet<JBehaviour>> GameObjectJBehaviours =
+            new Dictionary<GameObject, HashSet<JBehaviour>>(17);
 
         /// <summary>
         /// Instance ID
         /// 实例ID
         /// </summary>
         public string InstanceID => _instanceID;
-        private string _instanceID;
+
+        [ClassBindIgnore] private string _instanceID;
 
         /// <summary>
         /// GameObject of this instance
         /// 游戏对象
         /// </summary>
         public GameObject gameObject => _gameObject;
-        private GameObject _gameObject;
+
+        [ClassBindIgnore] private GameObject _gameObject;
 
         /// <summary>
         /// Loop in frame or millisecond
         /// 帧模式或毫秒模式
         /// </summary>
-        public bool FrameMode = true;
+        [ClassBindIgnore] public bool FrameMode = true;
 
         /// <summary>
         /// Frequency of loop, if frame = false, this field stands for milliseconds
         /// 循环频率，如果是毫秒模式，单位就是ms
         /// </summary>
-        public int Frequency = 1;
+        [ClassBindIgnore] public int Frequency = 1;
 
         /// <summary>
         /// Total time that this JBehaviour has run
         /// 该JBehaviour运行总时长
         /// </summary>
-        public float TotalTime = 0;
+        [ClassBindIgnore] public float TotalTime;
 
         /// <summary>
         /// Deltatime of loop
         /// 循环耗时
         /// </summary>
-        public float LoopDeltaTime = 0;
+        [ClassBindIgnore] public float LoopDeltaTime;
 
         /// <summary>
         /// Loop counts
         /// 循环次数
         /// </summary>
-        public long LoopCounts = 0;
-
+        [ClassBindIgnore] public long LoopCounts;
 
         /// <summary>
         /// Time scale
         /// 时间倍速
         /// </summary>
-        public float TimeScale = 1;
+        [ClassBindIgnore] public float TimeScale = 1;
 
         /// <summary>
         /// Pause before init
         /// 是否暂停
         /// </summary>
-        private bool Paused = false;
+        [ClassBindIgnore] private bool _paused;
+
+        /// <summary>
+        /// Is gameObject hidden
+        /// 是否隐藏
+        /// </summary>
+        [ClassBindIgnore] private bool _hidden;
+
+        /// <summary>
+        /// Current loop time
+        /// 当前循环的时间
+        /// </summary>
+        [ClassBindIgnore] private float _curTime;
+
 
         #endregion
 
         #region METHODS
+
         /// <summary>
         /// Hides the UI gameObject
         /// 隐藏UI对象
         /// </summary>
         public JBehaviour Hide()
         {
-            if (this._gameObject != null)
+            if (_gameObject != null)
             {
-                this._gameObject.SetActive(false);
+                _gameObject.SetActive(false);
             }
+
+            _hidden = true;
+            OnHide();
             return this;
         }
 
@@ -354,10 +445,13 @@ namespace JEngine.Core
         /// </summary>
         public JBehaviour Show()
         {
-            if (this._gameObject != null)
+            if (_gameObject != null)
             {
-                this._gameObject.SetActive(true);
+                _gameObject.SetActive(true);
             }
+
+            _hidden = false;
+            OnShow();
             return this;
         }
 
@@ -367,7 +461,7 @@ namespace JEngine.Core
         /// </summary>
         public JBehaviour Pause()
         {
-            Paused = true;
+            _paused = true;
             return this;
         }
 
@@ -377,7 +471,7 @@ namespace JEngine.Core
         /// </summary>
         public JBehaviour Resume()
         {
-            Paused = false;
+            _paused = false;
             return this;
         }
 
@@ -388,9 +482,23 @@ namespace JEngine.Core
         /// <returns></returns>
         public JBehaviour Activate()
         {
-            this.Awake();
+            //主线程
+            ThreadMgr.QueueOnMainThread(() =>
+            {
+                Awake();
+                var duration = 1f / ((float)Application.targetFrameRate <= 0
+                    ? FpsMonitor.FPS
+                    : Application.targetFrameRate);
+                duration = duration / TimeScale;
+                ThreadMgr.QueueOnMainThread(() =>
+                {
+                    OnEnable();
+                    Start();
+                }, duration);
+            });
             return this;
         }
+
         #endregion
 
         #region INTERNAL
@@ -399,26 +507,16 @@ namespace JEngine.Core
         /// Launch the lifecycle
         /// 开始生命周期
         /// </summary>
-        private protected async void Launch()
+        private async void Launch()
         {
-            while (!LoopAwaitToken.IsCancellationRequested)
+            while (!Application.isPlaying)
             {
                 if (JBehaviours is null || _gameObject.activeSelf)
                 {
                     break;
                 }
 
-                try
-                {
-                    await Task.Delay(10, LoopAwaitToken.Token);
-                }
-                catch (Exception ex)
-                {
-                    if (ex is TaskCanceledException)
-                    {
-                        return;
-                    }
-                }
+                await Task.Delay(1);
             }
 
             if (JBehaviours is null || _gameObject is null)
@@ -426,15 +524,140 @@ namespace JEngine.Core
                 return;
             }
 
-            Stopwatch sw = new Stopwatch();
-            sw.Start();
             try
             {
                 Init();
             }
             catch (Exception e)
             {
-                Log.PrintError($"{_gameObject.name}<{_instanceID}> Init failed: {e.Message}, {e.Data["StackTrace"]}, skipped init");
+                Log.PrintError(
+                    $"{_gameObject.name}<{_instanceID}> Init failed: {e.Message}, {e.Data["StackTrace"]}, skipped init");
+            }
+        }
+        
+        /// <summary>
+        /// Do loop once
+        /// 执行一次循环
+        /// </summary>
+        private void DoLoop()
+        {
+            try //循环
+            {
+                Loop();
+            }
+            catch (Exception ex)
+            {
+                Log.PrintError(
+                    $"{_gameObject.name}<{_instanceID}> Loop failed: {ex.Message}, {ex.Data["StackTrace"]}");
+            }
+        }
+
+        /// <summary>
+        /// 设置Hidden状态
+        /// </summary>
+        private void SetHidden()
+        {
+            _hidden = !_gameObject.activeInHierarchy;
+        }
+
+        /// <summary>
+        /// Call end method
+        /// 调用周期销毁
+        /// </summary>
+        private void Destroy()
+        {
+            var index = LoopJBehaviours.IndexOf(this);
+            if (index != -1)
+            {
+                LoopJBehaviours.RemoveAt(index);
+            }
+
+            JBehaviours.Remove(_instanceID);
+            GameObjectJBehaviours.Remove(_gameObject);
+            _gameObject = null;
+            if (Application.isPlaying)
+            {
+                End();
+            }
+        }
+
+
+        [ClassBindIgnore] private bool _checked;
+
+        /// <summary>
+        /// 检测字典，应当在Awake之前被执行
+        /// </summary>
+        private void Check()
+        {
+            if (_checked) return;
+            if (_gameObject == null)
+            {
+                _gameObject = new GameObject(_instanceID); //生成GameObject
+
+                //编辑器下可视化
+                if (Application.isEditor)
+                {
+                    //绑定上去
+                    var id = AddClassBind(_gameObject, false, GetType());
+                    JBehaviours.TryGetValue(InstanceID, out var item);
+                    //替换自己本身的id
+                    JBehaviours.Remove(_instanceID); //移除构造函数创的自己的JBehaviour
+                    if (item != null)
+                    {
+                        JBehavioursList.Remove(item);
+                    }
+
+                    _instanceID = id; //更改id
+                    _gameObject.name = id; //改名
+                    JBehaviours[id] = this; //覆盖字典里的值
+                }
+            }
+
+            if (!JBehavioursList.Contains(this))
+            {
+                JBehavioursList.Add(this);
+            }
+
+            if (!GameObjectJBehaviours.TryGetValue(_gameObject, out var lst))
+            {
+                lst = new HashSet<JBehaviour>();
+                GameObjectJBehaviours.Add(_gameObject, lst);
+            }
+
+            lst.Add(this);
+            _checked = true;
+        }
+
+        /// <summary>
+        /// Call to launch JBehaviour
+        /// 启动生命周期
+        /// </summary>
+        private void Awake()
+        {
+            Launch();
+        }
+
+        /// <summary>
+        /// Awake后的下一帧检测Show或Hide然后Run
+        /// </summary>
+        private void OnEnable()
+        {
+            SetHidden();
+            try
+            {
+                if (gameObject.activeInHierarchy)
+                {
+                    OnShow();
+                }
+                else
+                {
+                    OnHide();
+                }
+            }
+            catch (Exception e)
+            {
+                Log.PrintError(
+                    $"{_gameObject.name}<{_instanceID}> OnShow/OnHide failed: {e.Message}, {e.Data["StackTrace"]}, skipped OnShow/OnHide");
             }
 
             try
@@ -443,147 +666,36 @@ namespace JEngine.Core
             }
             catch (Exception e)
             {
-                Log.PrintError($"{_gameObject.name}<{_instanceID}> Run failed: {e.Message}, {e.Data["StackTrace"]}, skipped run");
-            }
-
-            sw.Stop();
-            TotalTime += sw.ElapsedMilliseconds / 1000f;
-            DoLoop();
-        }
-
-        /// <summary>
-        /// Cancel delay
-        /// 取消延迟
-        /// </summary>
-        private CancellationTokenSource LoopAwaitToken;
-
-        /// <summary>
-        /// Do the loop
-        /// </summary>
-        private protected async void DoLoop()
-        {
-            Stopwatch sw = new Stopwatch();
-
-            while (_gameObject != null && !LoopAwaitToken.IsCancellationRequested)
-            {
-                if (Paused)//暂停
-                {
-                    await Task.Delay(25);
-                    continue;
-                }
-
-
-                //调整参数
-                if (TimeScale < 0.001f)
-                {
-                    TimeScale = 1;
-                }
-                if (Frequency <= 0)
-                {
-                    Frequency = 1;
-                }
-
-                sw.Reset();
-                sw.Start();
-
-                try//循环
-                {
-                    Loop();
-                }
-                catch (Exception ex)
-                {
-                    Log.PrintError($"{_gameObject.name}<{_instanceID}> Loop failed: {ex.Message}, {ex.Data["StackTrace"]}");
-                    return;
-                }
-
-                int duration;
-                if (FrameMode)//等待
-                {
-                    duration = (int)(((float)Frequency / ((float)Application.targetFrameRate <= 0 ? GameStats.FPS : Application.targetFrameRate)) * 1000f);
-                    duration = (int)(duration / TimeScale);
-                }
-                else
-                {
-                    duration = Frequency;
-                    duration = (int)(duration / TimeScale);
-                }
-                if (duration < -1)
-                {
-                    duration = 1;
-                }
-                try
-                {
-                    await Task.Delay(duration, LoopAwaitToken.Token);
-                }
-                catch (Exception ex)
-                {
-                    //会抛出TaskCanceledException，表示等待被取消，直接Destory
-                    if (ex is TaskCanceledException)
-                    {
-                        Destroy();
-                        return;
-                    }
-                }
-
-                sw.Stop();
-
-                //操作时间
-                var time = sw.ElapsedMilliseconds / 1000f;
-                LoopCounts++;
-                LoopDeltaTime = time;
-                TotalTime += time;
-            }
-            Destroy();
-        }
-
-        /// <summary>
-        /// Call end method
-        /// 调用周期销毁
-        /// </summary>
-        private protected void Destroy()
-        {
-            _gameObject = null;
-            LoopAwaitToken = null;
-            if (Application.isPlaying)
-            {
-                End();
+                Log.PrintError(
+                    $"{_gameObject.name}<{_instanceID}> Run failed: {e.Message}, {e.Data["StackTrace"]}, skipped run");
             }
         }
 
         /// <summary>
-        /// Call to launch JBehaviour
-        /// 启动生命周期
+        /// Run后下一帧开始Loop
         /// </summary>
-        private protected void Awake()
+        private void Start()
         {
-            if (_gameObject == null)
-            {
-                _gameObject = new GameObject(_instanceID);//生成GameObject
-
-                //编辑器下可视化
-                if (Application.isEditor)
-                {
-                    //绑定上去
-                    var id = AddClassBind(_gameObject, false, this.GetType());
-
-                    //替换自己本身的id
-                    JBehaviours.Remove(_instanceID);//移除构造函数创的自己的JBehaviour
-                    this._instanceID = id;//更改id
-                    this._gameObject.name = id;//改名
-                    JBehaviours[id] = this;//覆盖字典里的值
-                }
-            }
-            Launch();
+            LoopJBehaviours.Add(this);
         }
 
         private void ResetJBehaviour(GameObject go)
         {
             _gameObject = go;
-            _instanceID = JBehaviourMgr.Instance.GetJBehaviourInstanceID();
-            JBehaviours.Add(_instanceID, this);
+            JBehaviours.Remove(_instanceID);
+            _instanceID = GetJBehaviourInstanceID();
+            JBehaviours[_instanceID] = this;
+            if (!JBehavioursList.Contains(this))
+                JBehavioursList.Add(this);
+            if (!GameObjectJBehaviours.TryGetValue(_gameObject, out var lst))
+            {
+                lst = new HashSet<JBehaviour>();
+                GameObjectJBehaviours.Add(_gameObject, lst);
+            }
 
-            LoopAwaitToken = new CancellationTokenSource();
+            lst.Add(this);
         }
+
         #endregion
 
 
@@ -608,6 +720,17 @@ namespace JEngine.Core
         {
 
         }
+
+        public virtual void OnShow()
+        {
+
+        }
+
+        public virtual void OnHide()
+        {
+
+        }
+
         #endregion
     }
 
@@ -635,5 +758,15 @@ namespace JEngine.Core
         /// 销毁
         /// </summary>
         void End();
+
+        /// <summary>
+        /// 显示
+        /// </summary>
+        void OnShow();
+
+        /// <summary>
+        /// 隐藏
+        /// </summary>
+        void OnHide();
     }
 }

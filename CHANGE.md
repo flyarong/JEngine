@@ -1,5 +1,116 @@
 ## All Versions
 
+### 0.8.0 (April 11 2023)
+
+- **Supported** WebGL
+- **Removed** JUI (will be redesigned shortly)
+- **Optimized** LifeCycleMgr performance
+- **Optimized** ThreadMgr features
+- **Optimized** JStream performance
+- **Optimized** JBehaviour performance
+- **Optimized** MonoBehaviour performance
+- **Optimized** FpsMonitor performance
+- **Optimized** CryptoMgr interfaces
+- **Optimized** JBehaviour/ClassBind Object/MonoBehaviour GC
+- **Optimized** GetComponent(s)/FindObject(s)OfType performance
+- **Switched** to YooAsset for asset management module (instead of Bundle Master)
+- **NEW FEATURE** UnsafeMgr which provides unsafe (use for optimization) features 
+- **NEW FEATURE** UnmanagedMemoryPool which supports allocating unmanaged memory with pooling
+- **NEW FEATURE** CoroutineMgr which supports executing/stopping coroutines from non-MonoBehaviour class
+- **NEW STRUCTURE** Split JEngine source code to multiple packages
+
+
+
+
+
+### 0.7.5 (September 25 2022)
+
+- **Updated** ILRuntime to v2.1.0
+- **Optimized** code register workflow
+- **Optimized** JStream buffer strategy
+- **Optimized** ClassBind performance and GC
+- **Optimized** JEngine Initialize procedure and performance
+- **Optimized** LifeCycleMgr performance and GC
+- **Optimized** ```FindObjectsOfType``` performance and GC
+- **Optimized** JBehaviour performance and GC, removed its dependence to ```MonoBehaviour```
+- **Optimized** Loom (Execute Actions on Main Thread) performance and GC, removed its dependence to ```MonoBehaviour```
+
+
+
+### 0.7.4 (September 22 2022)
+
+- Bug **fixed**
+- **Imported ** high performance C# library Nino
+- **Optimized** JBehaviour performance and GC
+- **Optimized** MonoBehaviour update logics and GC
+- **Optimized** blockwised decrypt intepret module's allocated memroy size and GC
+
+
+
+### 0.7.3 (July 14 2022)
+
+- Bug **fixed**
+
+- **Updated** ILRuntime
+
+- **Updated** Bundle Master
+
+- **Enhanced** JBehaviour performance
+
+- **Enhanced** ClassBind runtime performance
+
+- **Almost no GC allocation**  async wait method
+
+  
+
+### 0.7.2 (May 15 2022)
+
+- Bug **fixed**
+- **Enhanced** framework code
+- **Enhance ** Lifecycle
+- **Updated** ETTask
+- **Enhanced **JAction
+- **Enhanced** JBehaviour
+- **Enhanced** Unity **Exception StackTrace**
+- **HotUpdateResource** support **Blacklist**
+- **New** Protobuf **Serialize Demo**
+- **Updated** Protobuf-net **library**
+
+### 0.7.1 (March 28 2022)
+
+- **Update** ILRuntime v2.0.2
+- Support **multiple** hot update **packages**
+- **Removed** XAsset
+- Imported **BundleMaster**
+
+
+
+### 0.7.0 (Feburary 17 2022)
+
+  - Mark dependencies as **modules** (More standardized)
+  - Support **offline mode** (Run your game without building a resource server)
+  - Modify **developing procedure** (Enhanced experience when developing)
+  - **Decoupling framework code** (More lightweight and even easier to use)
+  - **Enhanced framework code** (A better performance)
+  - Enhanced **Litjson and Protobuf-net** (More reliable (de)serializing tools)
+  - **Fixed all Issues** occured in 0.6.3 (More powerful and less bugs)
+  - More **Demo** (Easier to start)
+  - Add **extensible validator** (New feature)
+  - Useful **UI extension tools** (New feature)
+  - **ILRuntime2.0** (A better performance with less bugs)
+  - **JPrefab Upgrade** (Support (a)synchronization to create and destory mutliple at once)
+  - **JBehaviour new lifecycles** (Similar to MonoBehaviour's OnEnable and OnDisable)
+
+
+
+### v0.6.3 (August 13 2021)
+
+- **Implemented** ```[System.Serializable]``` when generating **c# from proto**
+- **Changed** ClassBind default to **active after**
+- **Enhanced** the precision for **JFloat**
+- **Enhanced** unity project which no longer depends JBehaviour from HotUpdate Solution
+- **NEW** JEvent + Event Demo
+
 
 
 ### v0.6.2 (April 30 2021)
