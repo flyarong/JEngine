@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading.Tasks;
 using JEngine.Core;
 using UnityEditor;
@@ -31,10 +32,16 @@ namespace JEngine.Editor
                     if (!Application.isPlaying) return;
                     await Task.Delay(10);
                 }
+
                 DynamicGI.UpdateEnvironment();
             }
 
-            var key = Object.FindObjectOfType<InitJEngine>().key;
+            var comp = Object.FindFirstObjectByType<InitJEngine>();
+            if (comp == null)
+            {
+                Debug.LogWarning("没有找到InitJEngine脚本，无法检验秘钥是否正确");
+            }
+            var key = comp.key;
             var k = PlayerPrefs.GetString($"{prefix}.EncryptPassword", "");
             if (string.IsNullOrEmpty(k))
             {
@@ -50,7 +57,7 @@ namespace JEngine.Editor
                         Setting.GetString(SettingString.Ok), Setting.GetString(SettingString.Ignore));
                     if (res)
                     {
-                        Object.FindObjectOfType<InitJEngine>().key = k;
+                        comp.key = k;
                     }
                 }
             }

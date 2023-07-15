@@ -26,6 +26,8 @@
 
 using System;
 using UnityEngine;
+using System.Threading;
+using Unity.Collections;
 using System.Reflection;
 using System.Collections.Generic;
 using Unity.Collections.LowLevel.Unsafe;
@@ -53,7 +55,24 @@ namespace JEngine.Core
 
             public static LifeCycleItem* Create(in void* instancePtr, in ulong gcAddr, Action action, Func<bool> cond)
             {
-                LifeCycleItem* item = (LifeCycleItem*)Pool.Allocate(sizeof(LifeCycleItem));
+                byte* ptr = UsageList;
+                LifeCycleItem* item = ItemList;
+                byte* max = ptr + MaxSize;
+                while (ptr < max)
+                {
+                    if (*ptr == 0)
+                    {
+                        *ptr = 1;
+                        break;
+                    }
+
+                    ptr++;
+                    item++;
+                }
+
+                if (ptr == max)
+                    throw new Exception("LifeCycleMgr: LifeCycleItem is full!");
+
                 item->InstancePtr = (IntPtr)instancePtr;
                 item->_instanceGCHandleAddress = gcAddr;
                 item->_actionPtr = UnsafeUtility.PinGCObjectAndGetAddress(action, out item->_actionGCHandleAddress);
@@ -72,7 +91,7 @@ namespace JEngine.Core
                 UnsafeUtility.ReleaseGCObject(_condGCHandleAddress);
                 fixed (LifeCycleItem* ptr = &this)
                 {
-                    Pool.Free((byte*)ptr);
+                    UsageList[ptr - ItemList] = 0;
                 }
             }
         }
@@ -100,12 +119,27 @@ namespace JEngine.Core
         /// 单例
         /// </summary>
         public static LifeCycleMgr Instance => _instance;
-        
+
         /// <summary>
-        /// 非托管内存池
-        /// 最多同时10240个被占用的任务（480KB内存）
+        /// 非托管内存
         /// </summary>
-        private static readonly UnmanagedMemoryPool Pool = new UnmanagedMemoryPool(sizeof(LifeCycleItem) * 10240);
+        private static readonly LifeCycleItem* ItemList =
+            (LifeCycleItem*)UnsafeUtility.Malloc(sizeof(LifeCycleItem) * MaxSize, 4, Allocator.Persistent);
+
+        /// <summary>
+        /// 使用列表
+        /// </summary>
+        private static readonly byte* UsageList = (byte*)UnsafeUtility.Malloc(MaxSize, 4, Allocator.Persistent);
+
+        /// <summary>
+        /// 最大数量
+        /// </summary>
+        private const int MaxSize = 30000;
+
+        /// <summary>
+        /// 锁
+        /// </summary>
+        private static SpinLock _createLock;
 
         /// <summary>
         /// unity周期
@@ -120,6 +154,19 @@ namespace JEngine.Core
 
             _ignoreWithoutInInstancesFunc = IgnoreWithoutInInstances;
             _ignoreWithInInstancesFunc = IgnoreWithInInstances;
+            GC.AddMemoryPressure(sizeof(LifeCycleItem) * MaxSize);
+            GC.AddMemoryPressure(MaxSize);
+        }
+
+        /// <summary>
+        /// 清理非托管
+        /// </summary>
+        private void OnDestroy()
+        {
+            UnsafeUtility.Free(ItemList, Allocator.Persistent);
+            UnsafeUtility.Free(UsageList, Allocator.Persistent);
+            GC.RemoveMemoryPressure(sizeof(LifeCycleItem) * MaxSize);
+            GC.RemoveMemoryPressure(MaxSize);
         }
 
         /// <summary>
@@ -175,7 +222,20 @@ namespace JEngine.Core
         /// <param name="action"></param>
         /// <param name="cond"></param>
         private static IntPtr GetLifeCycleItem(in void* addr, in ulong gcAddr, Action action,
-            Func<bool> cond) => (IntPtr)LifeCycleItem.Create(in addr, in gcAddr, action, cond);
+            Func<bool> cond)
+        {
+            bool gotLock = false;
+            try
+            {
+                _createLock.Enter(ref gotLock);
+                return
+                    (IntPtr)LifeCycleItem.Create(in addr, in gcAddr, action, cond);
+            }
+            finally
+            {
+                if (gotLock) _createLock.Exit();
+            }
+        }
 
         /// <summary>
         /// Add awake task
@@ -226,12 +286,13 @@ namespace JEngine.Core
         /// <param name="instance"></param>
         /// <param name="method"></param>
         /// <param name="parent"></param>
-        public void AddUpdateItem<T>(T instance, MethodInfo method, GameObject parent) where T : class
+        /// <param name="cond"></param>
+        public void AddUpdateItem<T>(T instance, MethodInfo method, GameObject parent, Func<bool> cond = null) where T : class
         {
             void* ptr = UnsafeUtility.PinGCObjectAndGetAddress(instance, out var address);
             _updateItems.Add(GetLifeCycleItem(in ptr, in address,
                 () => method?.Invoke(instance, ConstMgr.NullObjects),
-                () => parent.activeInHierarchy));
+                () => cond == null ? parent.activeInHierarchy : parent.activeInHierarchy && cond.Invoke()));
         }
 
         /// <summary>
@@ -300,11 +361,13 @@ namespace JEngine.Core
         /// <param name="instance"></param>
         /// <param name="method"></param>
         /// <param name="parent"></param>
-        public void AddLateUpdateItem<T>(T instance, MethodInfo method, GameObject parent) where T : class
+        /// <param name="cond"></param>
+        public void AddLateUpdateItem<T>(T instance, MethodInfo method, GameObject parent, Func<bool> cond = null) where T : class
         {
             void* ptr = UnsafeUtility.PinGCObjectAndGetAddress(instance, out var address);
             _lateUpdateItems.Add(GetLifeCycleItem(in ptr, in address,
-                () => method?.Invoke(instance, ConstMgr.NullObjects), () => parent.activeInHierarchy));
+                () => method?.Invoke(instance, ConstMgr.NullObjects), 
+                () => cond == null ? parent.activeInHierarchy : parent.activeInHierarchy && cond.Invoke()));
         }
 
         /// <summary>
@@ -344,11 +407,13 @@ namespace JEngine.Core
         /// <param name="instance"></param>
         /// <param name="method"></param>
         /// <param name="parent"></param>
-        public void AddFixedUpdateItem<T>(T instance, MethodInfo method, GameObject parent) where T : class
+        /// <param name="cond"></param>
+        public void AddFixedUpdateItem<T>(T instance, MethodInfo method, GameObject parent, Func<bool> cond = null) where T : class
         {
             void* ptr = UnsafeUtility.PinGCObjectAndGetAddress(instance, out var address);
             _fixedUpdateItems.Add(GetLifeCycleItem(in ptr, in address,
-                () => method?.Invoke(instance, ConstMgr.NullObjects), () => parent.activeInHierarchy));
+                () => method?.Invoke(instance, ConstMgr.NullObjects), 
+                () => cond == null ? parent.activeInHierarchy : parent.activeInHierarchy && cond.Invoke()));
         }
 
         /// <summary>
@@ -453,8 +518,9 @@ namespace JEngine.Core
         /// <param name="items"></param>
         /// <param name="removeAfterInvoke"></param>
         /// <param name="ignoreCondition"></param>
+        /// <param name="iterate"></param>
         private void ExecuteItems(List<IntPtr> items, in bool removeAfterInvoke = true,
-            IgnoreCondFunc ignoreCondition = null)
+            IgnoreCondFunc ignoreCondition = null, Action<LifeCycleItem> iterate = null)
         {
             int count = items.Count;
             //遍历
@@ -500,6 +566,7 @@ namespace JEngine.Core
                 try
                 {
                     item->Action?.Invoke();
+                    iterate?.Invoke(*item);
                 }
                 catch (Exception ex)
                 {
@@ -566,22 +633,10 @@ namespace JEngine.Core
         }
 
         /// <summary>
-        /// remove obj from instances
-        /// </summary>
-        /// <param name="ptr"></param>
-        /// <returns></returns>
-        private bool RemoveInstanceIfContains(IntPtr ptr) => _instances.Contains(ptr);
-
-        /// <summary>
-        /// remove obj from instances
-        /// </summary>
-        private Predicate<IntPtr> RemoveInstanceIfContainsPredicate => RemoveInstanceIfContains;
-        
-        /// <summary>
         /// execute once task
         /// </summary>
         private bool _onceTaskExecuting;
-        
+
         /// <summary>
         /// 处理只调用一次的任务
         /// </summary>
@@ -643,10 +698,8 @@ namespace JEngine.Core
                     _instances.Add(item->InstancePtr);
                 }
 
-                ExecuteItems(_awakeItems);
-
-                //清理
-                _awakeObjs.RemoveWhere(RemoveInstanceIfContainsPredicate);
+                ExecuteItems(_awakeItems,
+                    iterate: il => _awakeObjs.Remove(il.InstancePtr));
             }
 
             //如果有start
@@ -655,9 +708,6 @@ namespace JEngine.Core
                 //确保本帧没处理过这些对象
                 if (_instances.Count > 0)
                 {
-                    //调用start，并记录本帧处理的对象
-                    ExecuteItems(_startItems, true, InstancesContains);
-
                     cnt = _startItems.Count;
                     for (i = 0; i < cnt; i++)
                     {
@@ -667,11 +717,13 @@ namespace JEngine.Core
                             _instances.Add(item->InstancePtr);
                         }
                     }
+                    
+                    //调用start，并记录本帧处理的对象
+                    ExecuteItems(_startItems, true, InstancesContains,
+                        iterate: il => _startObjs.Remove(il.InstancePtr));
                 }
                 else
                 {
-                    ExecuteItems(_startItems);
-
                     //调用start，并记录本帧处理的对象
                     cnt = _startItems.Count;
                     for (i = 0; i < cnt; i++)
@@ -679,10 +731,9 @@ namespace JEngine.Core
                         item = (LifeCycleItem*)_startItems[i];
                         _instances.Add(item->InstancePtr);
                     }
+                    
+                    ExecuteItems(_startItems, iterate: il => _startObjs.Remove(il.InstancePtr));
                 }
-
-                //清理
-                _startObjs.RemoveWhere(RemoveInstanceIfContainsPredicate);
             }
 
             //处理late update

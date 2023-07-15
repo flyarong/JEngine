@@ -31,7 +31,7 @@
 
 
 
-# JENGINE v0.8.0f5
+# JENGINE v0.8.0f6
 
 **JEngine is an out-of-the-box framework designed for Unity developers. It encapsulates powerful functions. Beginners can also get started quickly and easily create games that can be updated in runtime.**
 
