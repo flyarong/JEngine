@@ -1,6 +1,5 @@
-using System.Linq;
+using System.Collections;
 using System.Threading.Tasks;
-using JEngine.Core;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -12,7 +11,7 @@ namespace JEngine.Editor
     /// </summary>
     internal static class ChangeScene
     {
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSplashScreen)]
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static async void DoChange()
         {
             var prefix = $"JEngine.Editor.Setting.{Application.productName}.{SetData.GetPrefix()}.";
@@ -26,20 +25,21 @@ namespace JEngine.Editor
                     .Substring(path.LastIndexOf('/') + 1)
                     .Replace(".unity", "");
 
-                SceneManager.LoadScene(name);
-                while (SceneManager.GetActiveScene().name != name)
+                var op = SceneManager.LoadSceneAsync(name);
+                while (SceneManager.GetActiveScene().path != path)
                 {
-                    if (!Application.isPlaying) return;
-                    await Task.Delay(10);
+                    EditorUtility.DisplayProgressBar("JEngine", Setting.GetString(SettingString.JumpToStartUpScene), op.progress);
+                    await Task.Delay(100);
                 }
-
+                EditorUtility.ClearProgressBar();
                 DynamicGI.UpdateEnvironment();
             }
 
-            var comp = Object.FindFirstObjectByType<InitJEngine>();
+            var comp = Object.FindObjectOfType<InitJEngine>();
             if (comp == null)
             {
-                Debug.LogWarning("没有找到InitJEngine脚本，无法检验秘钥是否正确");
+                // Debug.LogWarning("没有找到InitJEngine脚本，无法检验秘钥是否正确");
+                return;
             }
             var key = comp.key;
             var k = PlayerPrefs.GetString($"{prefix}.EncryptPassword", "");
